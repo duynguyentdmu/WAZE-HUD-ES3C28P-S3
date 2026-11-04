@@ -18,3 +18,4 @@ waze-hud/dist/release*/
 waze-hud/dist/waze_hud_es3c28p_*.bin
 waze-hud/dist/*waze_hud_es3c28p_factory.bin
 /tools/host_preview/out/
+/preview_images/

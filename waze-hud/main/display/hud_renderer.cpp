@@ -11,6 +11,10 @@
 #include <cstring>
 #include <ctime>
 
+#if defined(_WIN32) && !defined(ESP_PLATFORM)
+extern "C" struct tm *gmtime_r(const time_t *timep, struct tm *result);
+#endif
+
 namespace waze_hud {
 namespace {
 constexpr char kTag[] = "DISPLAY";
@@ -1794,11 +1798,11 @@ void HudRenderer::renderStatus(Canvas &canvas, const Rect &region, const HudStat
     canvas.fillCircle(badgeX + 9 - region.x, 17 - region.y, 3, statusColor);
     canvas.fontText(badgeX + 16 - region.x, 9 - region.y, statusText, assets::kTextSmall, colors::White, badgeW - 20, false);
 
-    // Instructions Card Box (sy = 42..188)
+    // Instructions Card Box (sy = 38..168, cardH = 130)
     constexpr int cardX = 10;
-    constexpr int cardY = 42;
+    constexpr int cardY = 38;
     constexpr int cardW = 300;
-    constexpr int cardH = 146;
+    constexpr int cardH = 130;
     canvas.fillRect(cardX - region.x, cardY - region.y, cardW, cardH, colors::Panel);
     canvas.line(cardX - region.x, cardY - region.y, cardX + cardW - region.x, cardY - region.y, colors::Muted);
     canvas.line(cardX - region.x, cardY + cardH - region.y, cardX + cardW - region.x, cardY + cardH - region.y, colors::Muted);
@@ -1806,40 +1810,51 @@ void HudRenderer::renderStatus(Canvas &canvas, const Rect &region, const HudStat
     canvas.line(cardX + cardW - region.x, cardY - region.y, cardX + cardW - region.x, cardY + cardH - region.y, colors::Muted);
 
     if (state.signalStale) {
-        canvas.fontText(cardX + 15 - region.x, cardY + 25 - region.y, "Mất kết nối với điện thoại", assets::kTextMedium, colors::Amber, cardW - 30, false);
-        canvas.fontText(cardX + 15 - region.x, cardY + 60 - region.y, "Đang tự động kết nối lại...", assets::kTextSmall, colors::White, cardW - 30, false);
-        canvas.fontText(cardX + 15 - region.x, cardY + 85 - region.y, "Kiểm tra lại Bluetooth / Cáp trên máy", assets::kTextSmall, colors::Muted, cardW - 30, false);
+        canvas.fontText(cardX + 15 - region.x, cardY + 20 - region.y, "Mất kết nối với điện thoại", assets::kTextMedium, colors::Amber, cardW - 30, false);
+        canvas.fontText(cardX + 15 - region.x, cardY + 52 - region.y, "Đang tự động kết nối lại...", assets::kTextSmall, colors::White, cardW - 30, false);
+        canvas.fontText(cardX + 15 - region.x, cardY + 76 - region.y, "Kiểm tra lại Bluetooth / Cáp trên máy", assets::kTextSmall, colors::Muted, cardW - 30, false);
     } else if (state.connected) {
-        canvas.fontText(cardX + 15 - region.x, cardY + 25 - region.y, "Đã kết nối thành công!", assets::kTextMedium, colors::Green, cardW - 30, false);
-        canvas.fontText(cardX + 15 - region.x, cardY + 60 - region.y, "Đang chờ WazeMod gửi dữ liệu lộ trình...", assets::kTextSmall, colors::White, cardW - 30, false);
-        canvas.fontText(cardX + 15 - region.x, cardY + 85 - region.y, "Bắt đầu chuyến đi trên điện thoại để hiện HUD", assets::kTextSmall, colors::Muted, cardW - 30, false);
+        canvas.fontText(cardX + 15 - region.x, cardY + 20 - region.y, "Đã kết nối thành công!", assets::kTextMedium, colors::Green, cardW - 30, false);
+        canvas.fontText(cardX + 15 - region.x, cardY + 52 - region.y, "Đang chờ WazeMod gửi dữ liệu lộ trình...", assets::kTextSmall, colors::White, cardW - 30, false);
+        canvas.fontText(cardX + 15 - region.x, cardY + 76 - region.y, "Bắt đầu chuyến đi trên điện thoại để hiện HUD", assets::kTextSmall, colors::Muted, cardW - 30, false);
     } else {
-        canvas.fontText(cardX + 10 - region.x, cardY + 8 - region.y, "CÁCH KẾT NỐI VỚI ĐIỆN THOẠI:", assets::kTextSmall, colors::Amber, cardW - 20, false);
+        canvas.fontText(cardX + 10 - region.x, cardY + 6 - region.y, "CÁCH KẾT NỐI VỚI ĐIỆN THOẠI:", assets::kTextSmall, colors::Amber, cardW - 20, false);
         const uint16_t numColor = kIsUsb ? colors::Amber : colors::Cyan;
 
         // Step 1
-        canvas.fillRect(cardX + 10 - region.x, cardY + 32 - region.y, 20, 20, numColor);
-        canvas.fontText(cardX + 16 - region.x, cardY + 34 - region.y, "1", assets::kTextSmall, colors::Background, 10, false);
+        canvas.fillRect(cardX + 10 - region.x, cardY + 28 - region.y, 18, 18, numColor);
+        canvas.fontText(cardX + 16 - region.x, cardY + 29 - region.y, "1", assets::kTextSmall, colors::Background, 10, false);
         const char *step1 = kIsUsb ? "Cắm cáp OTG vào cổng USB của HUD" : "Bật Bluetooth trên điện thoại";
-        canvas.fontText(cardX + 38 - region.x, cardY + 34 - region.y, step1, assets::kTextSmall, colors::White, cardW - 46, false);
+        canvas.fontText(cardX + 36 - region.x, cardY + 29 - region.y, step1, assets::kTextSmall, colors::White, cardW - 44, false);
 
         // Step 2
-        canvas.fillRect(cardX + 10 - region.x, cardY + 68 - region.y, 20, 20, numColor);
-        canvas.fontText(cardX + 16 - region.x, cardY + 70 - region.y, "2", assets::kTextSmall, colors::Background, 10, false);
-        canvas.fontText(cardX + 38 - region.x, cardY + 70 - region.y, "Mở ứng dụng WazeMod", assets::kTextSmall, colors::White, cardW - 46, false);
+        canvas.fillRect(cardX + 10 - region.x, cardY + 60 - region.y, 18, 18, numColor);
+        canvas.fontText(cardX + 16 - region.x, cardY + 61 - region.y, "2", assets::kTextSmall, colors::Background, 10, false);
+        canvas.fontText(cardX + 36 - region.x, cardY + 61 - region.y, "Mở ứng dụng WazeMod", assets::kTextSmall, colors::White, cardW - 44, false);
 
         // Step 3
-        canvas.fillRect(cardX + 10 - region.x, cardY + 104 - region.y, 20, 20, numColor);
-        canvas.fontText(cardX + 16 - region.x, cardY + 106 - region.y, "3", assets::kTextSmall, colors::Background, 10, false);
-        const char *step3 = kIsUsb ? "Cài đặt MOD -> Kết nối với thiết bị (USB)" : "Cài đặt MOD -> Kết nối với thiết bị";
-        canvas.fontText(cardX + 38 - region.x, cardY + 106 - region.y, step3, assets::kTextSmall, colors::White, cardW - 46, false);
+        canvas.fillRect(cardX + 10 - region.x, cardY + 92 - region.y, 18, 18, numColor);
+        canvas.fontText(cardX + 16 - region.x, cardY + 93 - region.y, "3", assets::kTextSmall, colors::Background, 10, false);
+        const char *step3 = kIsUsb ? "Cài đặt MOD -> Kết nối (USB)" : "Cài đặt MOD -> Kết nối với thiết bị";
+        canvas.fontText(cardX + 36 - region.x, cardY + 93 - region.y, step3, assets::kTextSmall, colors::White, cardW - 44, false);
     }
 
-    // Footer hints (sy = 196..236)
-    const char *subhint = kIsUsb ? "Baudrate: 115200 bps | Cấp quyền USB" : "Tên thiết bị BLE: WazeHUD";
-    canvas.fontText(0 - region.x, 198 - region.y, subhint, assets::kTextSmall, colors::Cyan, layout::Width, true);
+    // Interactive Demo Button UI (sy = 175..203)
+    constexpr int btnX = 14;
+    constexpr int btnY = 175;
+    constexpr int btnW = 292;
+    constexpr int btnH = 28;
+    canvas.fillRect(btnX - region.x, btnY - region.y, btnW, btnH, colors::rgb565(15, 30, 48));
+    canvas.line(btnX - region.x, btnY - region.y, btnX + btnW - region.x, btnY - region.y, colors::Gold);
+    canvas.line(btnX - region.x, btnY + btnH - region.y, btnX + btnW - region.x, btnY + btnH - region.y, colors::Gold);
+    canvas.line(btnX - region.x, btnY - region.y, btnX - region.x, btnY + btnH - region.y, colors::Gold);
+    canvas.line(btnX + btnW - region.x, btnY - region.y, btnX + btnW - region.x, btnY + btnH - region.y, colors::Gold);
 
-    canvas.fontText(0 - region.x, 218 - region.y, "wazemod.io.vn - f38 VOZ", assets::kTextSmall, colors::Muted, layout::Width, true);
+    canvas.fontText(0 - region.x, btnY + 7 - region.y, "[ ▶ BẤM NÚT BOOT: CHẠY MÔ PHỎNG ]", assets::kTextSmall, colors::Gold, layout::Width, true);
+
+    // Footer hints (sy = 210..236)
+    const char *subhint = kIsUsb ? "Baudrate: 115200 bps | Cấp quyền USB" : "Tên BLE: WazeHUD  •  wazemod.io.vn - DII";
+    canvas.fontText(0 - region.x, 212 - region.y, subhint, assets::kTextSmall, colors::Muted, layout::Width, true);
 }
 
 #if CONFIG_WAZE_HUD_DISPLAY_CYD_28

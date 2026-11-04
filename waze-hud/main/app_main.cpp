@@ -29,6 +29,12 @@ namespace waze_hud {
 namespace {
 constexpr char kTag[] = "APP";
 uint32_t bootSequence = 0;
+
+void startDemo();
+void stopDemo();
+void nextDemoScenario();
+bool isDemoActive();
+
 #if CONFIG_WAZE_HUD_DISPLAY_35_480X320 || CONFIG_WAZE_HUD_DISPLAY_CYD_28
 constexpr gpio_num_t kOrientationButton = GPIO_NUM_0;
 #else
@@ -146,15 +152,22 @@ void orientationButtonTask(void *) {
                 bool statusVisible = false;
                 while (gpio_get_level(kOrientationButton) == 0) {
                     if (!statusVisible && xTaskGetTickCount() - pressedAt >= kLongPressTicks) {
-                        SystemStatus::instance().show();
-                        HudStateStore::instance().refresh();
-                        statusVisible = true;
+                        if (isDemoActive()) {
+                            stopDemo();
+                            statusVisible = true;
+                        } else {
+                            SystemStatus::instance().show();
+                            HudStateStore::instance().refresh();
+                            statusVisible = true;
+                        }
                     }
                     vTaskDelay(pdMS_TO_TICKS(20));
                 }
                 if (statusVisible) {
-                    SystemStatus::instance().hide();
-                    HudStateStore::instance().refresh();
+                    if (!isDemoActive()) {
+                        SystemStatus::instance().hide();
+                        HudStateStore::instance().refresh();
+                    }
                 } else {
                     bool doublePressed = false;
                     const TickType_t releasedAt = xTaskGetTickCount();
@@ -164,10 +177,14 @@ void orientationButtonTask(void *) {
                             if (gpio_get_level(kOrientationButton) == 0) {
                                 while (gpio_get_level(kOrientationButton) == 0)
                                     vTaskDelay(pdMS_TO_TICKS(20));
-                                const esp_err_t result = DeviceConfig::instance().toggleMirror();
-                                if (result != ESP_OK)
-                                    ESP_LOGE(kTag, "Mirror button update failed: %s",
-                                             esp_err_to_name(result));
+                                if (isDemoActive()) {
+                                    stopDemo();
+                                } else {
+                                    const esp_err_t result = DeviceConfig::instance().toggleMirror();
+                                    if (result != ESP_OK)
+                                        ESP_LOGE(kTag, "Mirror button update failed: %s",
+                                                 esp_err_to_name(result));
+                                }
                                 doublePressed = true;
                                 break;
                             }
@@ -175,10 +192,16 @@ void orientationButtonTask(void *) {
                         vTaskDelay(pdMS_TO_TICKS(10));
                     }
                     if (!doublePressed) {
-                        const esp_err_t result = DeviceConfig::instance().toggleRotation();
-                        if (result != ESP_OK)
-                            ESP_LOGE(kTag, "Orientation button update failed: %s",
-                                     esp_err_to_name(result));
+                        if (isDemoActive()) {
+                            nextDemoScenario();
+                        } else if (!HudStateStore::instance().snapshot().connected) {
+                            startDemo();
+                        } else {
+                            const esp_err_t result = DeviceConfig::instance().toggleRotation();
+                            if (result != ESP_OK)
+                                ESP_LOGE(kTag, "Orientation button update failed: %s",
+                                         esp_err_to_name(result));
+                        }
                     }
                 }
             }
@@ -241,7 +264,6 @@ void setText(std::array<char, Size> &target, const char *text) {
     std::snprintf(target.data(), target.size(), "%s", text);
 }
 
-#if CONFIG_WAZE_HUD_MOCK_MODE
 HudState baseMock() {
     HudState state{};
     state.connected = true;
@@ -265,74 +287,120 @@ HudState baseMock() {
     return state;
 }
 
-void mockTask(void *) {
-    ESP_LOGW(kTag, "Renderer mock mode enabled; BLE/HLP input is disabled");
-    vTaskDelay(pdMS_TO_TICKS(1200));
+static bool s_demoActive = false;
+static TaskHandle_t s_demoTaskHandle = nullptr;
+static uint32_t s_demoScenario = 0;
+
+bool isDemoActive() {
+    return s_demoActive;
+}
+
+void runDemoScenario(uint32_t scenario) {
+    HudState state = baseMock();
     constexpr uint32_t kScenarioCount = 12;
-    uint32_t scenario = 0;
-    for (;;) {
-        HudState state = baseMock();
-        switch (scenario % kScenarioCount) {
-            case 0: break;
-            case 1:
-                state.nearestAlert = {AlertKind::SpeedCamera, 300, 0};
-                state.upcomingAlerts[0] = {AlertKind::Police, 850, 0}; state.upcomingAlertCount = 1;
-                break;
-            case 2:
-                state.nearestAlert = {AlertKind::Police, 120, 0};
-                state.upcomingAlerts[0] = {AlertKind::Hazard, 600, 0};
-                state.upcomingAlerts[1] = {AlertKind::SpeedDrop, 900, 40}; state.upcomingAlertCount = 2;
-                break;
-            case 3:
-                state.noPassingZone = true; state.noPassingRemainingM = 1250;
-                state.nearestAlert = {AlertKind::NoPassing, 0, 0};
-                break;
-            case 4:
-                state.maneuver = Maneuver::RoundaboutRight; state.roundaboutExit = 3; state.maneuverDistanceM = 1200;
-                setText(state.currentStreet, "Võ Nguyên Giáp"); break;
-            case 5:
-                state.speedKmh = 86; state.speedLimitKmh = 60; state.overSpeed = true;
-                state.maneuver = Maneuver::SharpLeft; state.maneuverDistanceM = 35; break;
-            case 6:
-                state = {}; break;
-            case 7:
-                setText(state.currentStreet, "Đường Cách Mạng Tháng Tám, Phường Bến Thành");
-                state.maneuver = Maneuver::ExitRight; state.maneuverDistanceM = 980; break;
-            case 8:
-                state.maneuver = Maneuver::RoundaboutStraight; state.roundaboutExit = 2;
-                state.maneuverDistanceM = 420;
-                state.nearestAlert = {AlertKind::PhoneCamera, 650, 0};
-                break;
-            case 9:
-                state.nearestAlert = {AlertKind::Railway, 180, 0};
-                state.upcomingAlerts[0] = {AlertKind::Flood, 900, 0};
-                state.upcomingAlerts[1] = {AlertKind::SchoolZone, 1400, 0};
-                state.upcomingAlertCount = 2;
-                break;
-            case 10:
-                state.nearestAlert = {AlertKind::TrafficJam, 420, 0, 4, 18};
-                state.upcomingAlerts[0] = {AlertKind::TrafficJam, 1350, 0, 2, 5};
-                state.upcomingAlertCount = 1;
-                break;
-            case 11:
-                state.laneCount = 10;
-                for (uint8_t index = 0; index < state.laneCount; ++index) {
-                    state.lanes[index].directionMask = index < 3 ? 0x04 : index > 5 ? 0x20 : 0x01;
-                    state.lanes[index].selectedMask = index >= 3 && index <= 5 ? 0x01 : 0x00;
-                }
-                state.upcomingAlerts[0] = {AlertKind::Police, 650, 0};
-                state.upcomingAlerts[1] = {AlertKind::Hazard, 1200, 0};
-                state.upcomingAlertCount = 2;
-                break;
-        }
-        HudStateStore::instance().publish(state);
-        ESP_LOGI(kTag, "Mock renderer scenario %lu",
-                 static_cast<unsigned long>(scenario % kScenarioCount));
-        ++scenario;
-        vTaskDelay(pdMS_TO_TICKS(5000));
+    switch (scenario % kScenarioCount) {
+        case 0: break;
+        case 1:
+            state.nearestAlert = {AlertKind::SpeedCamera, 300, 0};
+            state.upcomingAlerts[0] = {AlertKind::Police, 850, 0}; state.upcomingAlertCount = 1;
+            break;
+        case 2:
+            state.nearestAlert = {AlertKind::Police, 120, 0};
+            state.upcomingAlerts[0] = {AlertKind::Hazard, 600, 0};
+            state.upcomingAlerts[1] = {AlertKind::SpeedDrop, 900, 40}; state.upcomingAlertCount = 2;
+            break;
+        case 3:
+            state.noPassingZone = true; state.noPassingRemainingM = 1250;
+            state.nearestAlert = {AlertKind::NoPassing, 0, 0};
+            break;
+        case 4:
+            state.maneuver = Maneuver::RoundaboutRight; state.roundaboutExit = 3; state.maneuverDistanceM = 1200;
+            setText(state.currentStreet, "Võ Nguyên Giáp"); break;
+        case 5:
+            state.speedKmh = 86; state.speedLimitKmh = 60; state.overSpeed = true;
+            state.maneuver = Maneuver::SharpLeft; state.maneuverDistanceM = 35; break;
+        case 6:
+            // Free drive screen (chạy tự do)
+            state.navigationActive = false;
+            state.maneuver = Maneuver::None;
+            state.currentStreet.fill(0);
+            state.nextStreet.fill(0);
+            state.eta.fill(0);
+            state.remainingMinutes = 0;
+            state.remainingKm = 0;
+            state.remainingMeters = 0;
+            break;
+        case 7:
+            setText(state.currentStreet, "Đường Cách Mạng Tháng Tám, Phường Bến Thành");
+            state.maneuver = Maneuver::ExitRight; state.maneuverDistanceM = 980; break;
+        case 8:
+            state.maneuver = Maneuver::RoundaboutStraight; state.roundaboutExit = 2;
+            state.maneuverDistanceM = 420;
+            state.nearestAlert = {AlertKind::PhoneCamera, 650, 0};
+            break;
+        case 9:
+            state.nearestAlert = {AlertKind::Railway, 180, 0};
+            state.upcomingAlerts[0] = {AlertKind::Flood, 900, 0};
+            state.upcomingAlerts[1] = {AlertKind::SchoolZone, 1400, 0};
+            state.upcomingAlertCount = 2;
+            break;
+        case 10:
+            state.nearestAlert = {AlertKind::TrafficJam, 420, 0, 4, 18};
+            state.upcomingAlerts[0] = {AlertKind::TrafficJam, 1350, 0, 2, 5};
+            state.upcomingAlertCount = 1;
+            break;
+        case 11:
+            state.laneCount = 10;
+            for (uint8_t index = 0; index < state.laneCount; ++index) {
+                state.lanes[index].directionMask = index < 3 ? 0x04 : index > 5 ? 0x20 : 0x01;
+                state.lanes[index].selectedMask = index >= 3 && index <= 5 ? 0x01 : 0x00;
+            }
+            state.upcomingAlerts[0] = {AlertKind::Police, 650, 0};
+            state.upcomingAlerts[1] = {AlertKind::Hazard, 1200, 0};
+            state.upcomingAlertCount = 2;
+            break;
+    }
+    HudStateStore::instance().publish(state);
+    ESP_LOGI(kTag, "Demo simulation scenario %lu", static_cast<unsigned long>(scenario % kScenarioCount));
+}
+
+void demoTask(void *) {
+    ESP_LOGI(kTag, "Demo simulation task started");
+    while (s_demoActive) {
+        runDemoScenario(s_demoScenario++);
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000));
+    }
+    s_demoTaskHandle = nullptr;
+    vTaskDelete(nullptr);
+}
+
+void startDemo() {
+    if (s_demoActive) return;
+    s_demoActive = true;
+    s_demoScenario = 0;
+    xTaskCreate(demoTask, "hud_demo", 4096, nullptr, 4, &s_demoTaskHandle);
+}
+
+void stopDemo() {
+    if (!s_demoActive) return;
+    s_demoActive = false;
+    if (s_demoTaskHandle) {
+        xTaskNotifyGive(s_demoTaskHandle);
+    }
+    HudState empty{};
+    HudStateStore::instance().publish(empty);
+    ESP_LOGI(kTag, "Demo simulation stopped; returned to waiting screen");
+}
+
+void nextDemoScenario() {
+    if (!s_demoActive) {
+        startDemo();
+        return;
+    }
+    if (s_demoTaskHandle) {
+        xTaskNotifyGive(s_demoTaskHandle);
     }
 }
-#endif
 }  // namespace
 }  // namespace waze_hud
 
@@ -379,7 +447,7 @@ extern "C" void app_main() {
                         ? ESP_OK : ESP_ERR_NO_MEM);
 
 #if CONFIG_WAZE_HUD_MOCK_MODE
-    ESP_ERROR_CHECK(xTaskCreate(mockTask, "hud_mock", 4096, nullptr, 4, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    startDemo();
 #else
     ESP_ERROR_CHECK(BleTransport::instance().init());
     ESP_ERROR_CHECK(HlpProtocol::instance().start());

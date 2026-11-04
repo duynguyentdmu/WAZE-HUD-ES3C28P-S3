@@ -15,7 +15,51 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-. $IdfProfile | Out-Null
+
+# Kiem tra idf.py da co san chua, neu chua thi tu dong tim va kich hoat moi truong ESP-IDF
+if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
+    $initialized = $false
+
+    # 1. Thu kich hoat bang Initialize-Idf.ps1 mac dinh cua bo cai Espressif
+    if (Test-Path "C:\Espressif\Initialize-Idf.ps1") {
+        $idfId = "esp-idf-c8b597983fb75feed08f99e44d31e20e"
+        $shortcut = Get-ChildItem -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ESP-IDF", "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\ESP-IDF" -Filter "*PowerShell*.lnk" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($shortcut) {
+            try {
+                $sh = New-Object -ComObject WScript.Shell
+                $lnkArgs = $sh.CreateShortcut($shortcut.FullName).Arguments
+                if ($lnkArgs -match '-IdfId\s+([^\s]+)') {
+                    $idfId = $Matches[1]
+                }
+            } catch {}
+        }
+        Write-Host "Dang tu dong kich hoat moi truong ESP-IDF 5.5..." -ForegroundColor Cyan
+        . "C:\Espressif\Initialize-Idf.ps1" -IdfId $idfId | Out-Null
+        if (Get-Command idf.py -ErrorAction SilentlyContinue) {
+            $initialized = $true
+        }
+    }
+
+    # 2. Thu file profile duoc truyen hoac tim trong C:\Espressif\tools
+    if (-not $initialized) {
+        if (Test-Path $IdfProfile) {
+            . $IdfProfile | Out-Null
+            $initialized = (Get-Command idf.py -ErrorAction SilentlyContinue)
+        } else {
+            $autoProfile = Get-ChildItem "C:\Espressif\tools\Microsoft.*.PowerShell_profile.ps1" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($autoProfile -and (Test-Path $autoProfile.FullName)) {
+                . $autoProfile.FullName | Out-Null
+                $initialized = (Get-Command idf.py -ErrorAction SilentlyContinue)
+            }
+        }
+    }
+
+    if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
+        Write-Host "`n[THONG BAO] Khong tim thay lenh 'idf.py' tren he thong!" -ForegroundColor Yellow
+        Write-Host "Vui long mo Start Menu -> chay ung dung 'ESP-IDF 5.5 PowerShell' de build firmware." -ForegroundColor Cyan
+        throw "Chua kich hoat duoc moi truong ESP-IDF."
+    }
+}
 
 $suffix = if ($Mock) { '-mock' } else { '' }
 $buildDir = "build-s3$suffix"
@@ -23,10 +67,15 @@ $sdkconfig = "sdkconfig.es3c28p$($suffix -replace '-', '.')"
 $defaults = 'sdkconfig.es3c28p.defaults'
 if ($Mock) { $defaults += ';sdkconfig.mock.defaults' }
 $output = "dist\waze_hud_es3c28p$($suffix -replace '-', '_')_factory.bin"
-$cydLock = 'dependencies.lock.cyd.tmp'
+$cydLock = Join-Path $PSScriptRoot 'dependencies.lock.cyd.tmp'
 
-Copy-Item dependencies.lock $cydLock -Force
-Copy-Item dependencies.es3c28p.lock dependencies.lock -Force
+if (Test-Path "$PSScriptRoot\dependencies.lock") {
+    Copy-Item "$PSScriptRoot\dependencies.lock" $cydLock -Force
+}
+if (Test-Path "$PSScriptRoot\dependencies.es3c28p.lock") {
+    Copy-Item "$PSScriptRoot\dependencies.es3c28p.lock" "$PSScriptRoot\dependencies.lock" -Force
+}
+
 try {
     $common = @('-B', $buildDir, '-D', "SDKCONFIG=$sdkconfig", '-D', "SDKCONFIG_DEFAULTS=$defaults")
     if (-not (Test-Path "$buildDir\CMakeCache.txt")) {
@@ -49,7 +98,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'flash failed' }
     }
 } finally {
-    Copy-Item dependencies.lock dependencies.es3c28p.lock -Force
-    Copy-Item $cydLock dependencies.lock -Force
-    Remove-Item $cydLock -Force
+    if (Test-Path "$PSScriptRoot\dependencies.lock") {
+        Copy-Item "$PSScriptRoot\dependencies.lock" "$PSScriptRoot\dependencies.es3c28p.lock" -Force
+    }
+    if (Test-Path $cydLock) {
+        Copy-Item $cydLock "$PSScriptRoot\dependencies.lock" -Force
+        Remove-Item $cydLock -Force -ErrorAction SilentlyContinue
+    }
 }
